@@ -19,16 +19,13 @@ except:
 
 def conectar_planilha():
     try:
-        # Acesso ao dicionário do TOML configurado nos Secrets
         cred_dict = dict(st.secrets["gcp_service_account"])
         escopos = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(cred_dict, scopes=escopos)
         client = gspread.authorize(creds)
         
-        # URL da sua planilha fornecida
+        # URL fixa para não ter erro de busca
         url_planilha = "https://docs.google.com/spreadsheets/d/1tZmD5U2DLXXT1te4R7OLfaQKR78eHhAJmpn2WwnUO70/edit?usp=drivesdk"
-        
-        # Abre diretamente pelo link para evitar erros de busca por nome
         return client.open_by_url(url_planilha)
     except Exception as e:
         st.sidebar.error(f"Erro na conexão com o Sheets: {e}")
@@ -61,7 +58,7 @@ def carregar_estado():
             return [], ""
     return [], ""
 
-# --- Inicialização da Memória (Carrega os dados salvos ao abrir o app) ---
+# --- Inicialização da Memória ---
 if 'questoes_lista' not in st.session_state or not st.session_state['questoes_lista']:
     q, r = carregar_estado()
     st.session_state['questoes_lista'] = q
@@ -92,7 +89,7 @@ with st.sidebar:
             with st.spinner("Enviando dados para a nuvem..."):
                 gc = conectar_planilha()
                 if gc:
-                    planilha_log = gc.sheet1 # Salva na primeira aba
+                    planilha_log = gc.sheet1
                     fuso_br = pytz.timezone('America/Sao_Paulo')
                     data_hora = datetime.now(fuso_br).strftime("%d/%m/%Y %H:%M")
                     planilha_log.append_row([data_hora, disciplina, horas, total_q, acertos, erros])
@@ -130,14 +127,41 @@ if arquivos:
             if st.button("🚀 GERAR NOVO SIMULADO", type="primary", use_container_width=True):
                 st.session_state['mostrar_gabarito'] = False
                 with st.spinner("A IA está analisando seus materiais..."):
-                    prompt = f"Gere {qtd} questões de múltipla escolha baseadas nos PDFs em JSON puro: pergunta, opcoes (lista A-E), correta, explica."
-                    resp = model.generate_content([prompt] + docs_ia)
-                    match = re.search(r'\[.*\]', resp.text, re.DOTALL)
-                    if match:
-                        dados = json.loads(match.group())
-                        st.session_state['questoes_lista'] = dados
-                        salvar_estado(questoes=dados)
-                        st.rerun()
+                    prompt = f"""
+                    Gere {qtd} questões de múltipla escolha baseadas nos PDFs.
+                    Retorne ESTRITAMENTE um array JSON válido. NÃO inclua nenhum texto antes ou depois.
+                    Formato: [{{"pergunta": "...", "opcoes": ["A...", "B...", "C...", "D...", "E..."], "correta": "A...", "explica": "..."}}]
+                    """
+                    
+                    try:
+                        resp = model.generate_content([prompt] + docs_ia)
+                        
+                        texto_limpo = resp.text.strip()
+                        if texto_limpo.startswith("```json"):
+                            texto_limpo = texto_limpo[7:]
+                        elif texto_limpo.startswith("```"):
+                            texto_limpo = texto_limpo[3:]
+                        if texto_limpo.endswith("```"):
+                            texto_limpo = texto_limpo[:-3]
+                            
+                        match = re.search(r'\[.*\]', texto_limpo, re.DOTALL)
+                        
+                        if match:
+                            try:
+                                dados = json.loads(match.group())
+                                st.session_state['questoes_lista'] = dados
+                                salvar_estado(questoes=dados)
+                                st.rerun()
+                            except json.JSONDecodeError:
+                                st.error("⚠️ A IA gerou as questões, mas se atrapalhou na formatação do código. Clique em gerar novamente!")
+                        else:
+                            st.error("⚠️ A IA não retornou o formato esperado. Tente novamente.")
+                            
+                    except Exception as e:
+                        if "ResourceExhausted" in str(e) or "429" in str(e):
+                            st.error("⚠️ Limite de leituras da IA atingido. Espere 1 minutinho e tente novamente.")
+                        else:
+                            st.error(f"⚠️ Erro ao comunicar com a IA: {e}")
 
         if st.session_state['questoes_lista']:
             st.info("💡 Estas questões estão sincronizadas com sua planilha.")
