@@ -23,15 +23,13 @@ def conectar_planilha():
         escopos = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(cred_dict, scopes=escopos)
         client = gspread.authorize(creds)
-        
-        # URL fixa para não ter erro de busca
         url_planilha = "https://docs.google.com/spreadsheets/d/1tZmD5U2DLXXT1te4R7OLfaQKR78eHhAJmpn2WwnUO70/edit?usp=drivesdk"
         return client.open_by_url(url_planilha)
     except Exception as e:
         st.sidebar.error(f"Erro na conexão com o Sheets: {e}")
         return None
 
-def salvar_estado(questoes=None, resumo=None):
+def salvar_estado(questoes=None, resumo=None, revisar=None):
     gc = conectar_planilha()
     if gc:
         try:
@@ -40,29 +38,33 @@ def salvar_estado(questoes=None, resumo=None):
                 aba_estado.update_acell('A1', json.dumps(questoes))
             if resumo is not None:
                 aba_estado.update_acell('B1', resumo)
+            if revisar is not None:
+                aba_estado.update_acell('C1', json.dumps(revisar))
         except:
-            st.error("Aba 'Estado_Atual' não encontrada. Verifique o nome na sua planilha.")
+            st.error("Aba 'Estado_Atual' não encontrada.")
 
 def carregar_estado():
     gc = conectar_planilha()
     if gc:
         try:
             aba_estado = gc.worksheet("Estado_Atual")
-            questoes_raw = aba_estado.acell('A1').value
-            resumo_raw = aba_estado.acell('B1').value
+            q_raw = aba_estado.acell('A1').value
+            r_raw = aba_estado.acell('B1').value
+            rev_raw = aba_estado.acell('C1').value
             
-            questoes = json.loads(questoes_raw) if questoes_raw else []
-            resumo = resumo_raw if resumo_raw else ""
-            return questoes, resumo
+            return (json.loads(q_raw) if q_raw else [], 
+                    r_raw if r_raw else "", 
+                    json.loads(rev_raw) if rev_raw else [])
         except:
-            return [], ""
-    return [], ""
+            return [], "", []
+    return [], "", []
 
 # --- Inicialização da Memória ---
-if 'questoes_lista' not in st.session_state or not st.session_state['questoes_lista']:
-    q, r = carregar_estado()
+if 'questoes_lista' not in st.session_state:
+    q, r, rev = carregar_estado()
     st.session_state['questoes_lista'] = q
     st.session_state['resumo_texto'] = r
+    st.session_state['revisar_lista'] = rev
 
 if 'mostrar_gabarito' not in st.session_state:
     st.session_state['mostrar_gabarito'] = False
@@ -75,9 +77,21 @@ with st.sidebar:
     disciplina = st.text_input("Matéria:")
     horas = st.number_input("Horas de Foco:", min_value=0.0, step=0.5)
     
+    # NOVO: Aba de Assuntos para Revisar
+    with st.expander("📚 Assuntos para Revisar", expanded=True):
+        if st.session_state['revisar_lista']:
+            for assunto in st.session_state['revisar_lista']:
+                st.write(f"• {assunto}")
+            if st.button("Clear Review List"):
+                st.session_state['revisar_lista'] = []
+                salvar_estado(revisar=[])
+                st.rerun()
+        else:
+            st.write("Nenhum tópico pendente. Bom trabalho!")
+
     st.divider()
-    st.subheader("Desempenho da Sessão")
-    total_q = st.number_input("Total de Questões:", min_value=0)
+    st.subheader("Registro de Sessão")
+    total_q = st.number_input("Total Questões:", min_value=0)
     col_a, col_e = st.columns(2)
     with col_a:
         acertos = st.number_input("Acertos:", min_value=0)
@@ -86,23 +100,21 @@ with st.sidebar:
     
     if st.button("☁️ Salvar Registro Final", use_container_width=True):
         if disciplina:
-            with st.spinner("Enviando dados para a nuvem..."):
-                gc = conectar_planilha()
-                if gc:
-                    planilha_log = gc.sheet1
-                    fuso_br = pytz.timezone('America/Sao_Paulo')
-                    data_hora = datetime.now(fuso_br).strftime("%d/%m/%Y %H:%M")
-                    planilha_log.append_row([data_hora, disciplina, horas, total_q, acertos, erros])
-                    st.success("Progresso salvo com sucesso!")
+            gc = conectar_planilha()
+            if gc:
+                planilha_log = gc.sheet1
+                fuso_br = pytz.timezone('America/Sao_Paulo')
+                data_hora = datetime.now(fuso_br).strftime("%d/%m/%Y %H:%M")
+                planilha_log.append_row([data_hora, disciplina, horas, total_q, acertos, erros])
+                st.success("Salvo!")
         else:
-            st.warning("Preencha o campo Disciplina.")
+            st.warning("Preencha a Disciplina.")
 
-    st.divider()
     if st.button("🗑️ Limpar Tudo", use_container_width=True):
         st.session_state['questoes_lista'] = []
         st.session_state['resumo_texto'] = ""
-        st.session_state['mostrar_gabarito'] = False
-        salvar_estado([], "") 
+        st.session_state['revisar_lista'] = []
+        salvar_estado([], "", [])
         st.rerun()
 
 # ==========================================
@@ -114,7 +126,6 @@ arquivos = st.file_uploader("Suba seus materiais em PDF", type="pdf", accept_mul
 
 if arquivos:
     docs_ia = [{"mime_type": "application/pdf", "data": f.getvalue()} for f in arquivos]
-    
     aba1, aba2, aba3 = st.tabs(["📝 Simulado", "📑 Resumo", "💬 Chat"])
 
     with aba1:
@@ -126,77 +137,69 @@ if arquivos:
             st.write("")
             if st.button("🚀 GERAR NOVO SIMULADO", type="primary", use_container_width=True):
                 st.session_state['mostrar_gabarito'] = False
-                with st.spinner("A IA está analisando seus materiais..."):
+                with st.spinner("Analisando conteúdos..."):
                     prompt = f"""
                     Gere {qtd} questões de múltipla escolha baseadas nos PDFs.
-                    Retorne ESTRITAMENTE um array JSON válido. NÃO inclua nenhum texto antes ou depois.
-                    Formato: [{{"pergunta": "...", "opcoes": ["A...", "B...", "C...", "D...", "E..."], "correta": "A...", "explica": "..."}}]
+                    Retorne ESTRITAMENTE um array JSON. 
+                    FORMATO: [{{"topico": "Assunto curto", "pergunta": "...", "opcoes": ["A...", "B...", "C...", "D...", "E..."], "correta": "Letra e texto", "explica": "..."}}]
                     """
-                    
                     try:
                         resp = model.generate_content([prompt] + docs_ia)
-                        
-                        texto_limpo = resp.text.strip()
-                        if texto_limpo.startswith("```json"):
-                            texto_limpo = texto_limpo[7:]
-                        elif texto_limpo.startswith("```"):
-                            texto_limpo = texto_limpo[3:]
-                        if texto_limpo.endswith("```"):
-                            texto_limpo = texto_limpo[:-3]
-                            
-                        match = re.search(r'\[.*\]', texto_limpo, re.DOTALL)
-                        
+                        match = re.search(r'\[.*\]', resp.text, re.DOTALL)
                         if match:
-                            try:
-                                dados = json.loads(match.group())
-                                st.session_state['questoes_lista'] = dados
-                                salvar_estado(questoes=dados)
-                                st.rerun()
-                            except json.JSONDecodeError:
-                                st.error("⚠️ A IA gerou as questões, mas se atrapalhou na formatação do código. Clique em gerar novamente!")
-                        else:
-                            st.error("⚠️ A IA não retornou o formato esperado. Tente novamente.")
-                            
+                            dados = json.loads(match.group())
+                            st.session_state['questoes_lista'] = dados
+                            salvar_estado(questoes=dados)
+                            st.rerun()
                     except Exception as e:
-                        if "ResourceExhausted" in str(e) or "429" in str(e):
-                            st.error("⚠️ Limite de leituras da IA atingido. Espere 1 minutinho e tente novamente.")
-                        else:
-                            st.error(f"⚠️ Erro ao comunicar com a IA: {e}")
+                        st.error(f"Erro ao gerar: {e}")
 
         if st.session_state['questoes_lista']:
-            st.info("💡 Estas questões estão sincronizadas com sua planilha.")
             for i, item in enumerate(st.session_state['questoes_lista']):
-                st.markdown(f"**{i+1}. {item['pergunta']}**")
-                st.radio("Selecione a resposta:", item['opcoes'], key=f"q_{i}", index=None, label_visibility="collapsed")
-                st.write("")
+                st.markdown(f"**{i+1}. [{item.get('topico', 'Geral')}]** {item['pergunta']}")
+                st.radio("Escolha:", item['opcoes'], key=f"q_{i}", index=None, label_visibility="collapsed")
             
             if st.button("✅ VERIFICAR RESPOSTAS", use_container_width=True):
                 st.session_state['mostrar_gabarito'] = True
-            
+
             if st.session_state['mostrar_gabarito']:
                 st.divider()
+                novos_erros = list(st.session_state['revisar_lista'])
+                
                 for i, item in enumerate(st.session_state['questoes_lista']):
                     escolha = st.session_state.get(f"q_{i}")
-                    if escolha == item['correta']:
+                    if not escolha:
+                        st.warning(f"Q{i+1}: Sem resposta.")
+                        continue
+                    
+                    # Lógica de comparação blindada (apenas primeira letra)
+                    letra_user = escolha[0].upper()
+                    letra_correta = item['correta'][0].upper()
+                    
+                    if letra_user == letra_correta:
                         st.success(f"Questão {i+1}: Correta! ✅")
                     else:
-                        st.error(f"Questão {i+1}: Errada. Você marcou {escolha}. A correta é {item['correta']}")
-                    st.info(f"💡 Explicação: {item['explica']}")
+                        st.error(f"Questão {i+1}: Errada. Marcou {letra_user}, era {letra_correta}")
+                        # Adiciona o tópico aos erros para revisão se já não estiver lá
+                        topico = item.get('topico', 'Assunto Geral')
+                        if topico not in novos_erros:
+                            novos_erros.append(topico)
+                
+                # Salva a nova lista de revisão na memória e no Sheets
+                st.session_state['revisar_lista'] = novos_erros
+                salvar_estado(revisar=novos_erros)
+                st.info("💡 Tópicos de questões erradas foram adicionados à sua lista de revisão na barra lateral.")
 
     with aba2:
-        if st.button("Gerar ou Atualizar Resumo"):
-            with st.spinner("Criando resumo estruturado..."):
-                res = model.generate_content(["Faça um resumo detalhado e estruturado destes documentos:", docs_ia])
-                st.session_state['resumo_texto'] = res.text
-                salvar_estado(resumo=res.text)
-        
+        if st.button("Gerar Resumo"):
+            res = model.generate_content(["Resuma estes documentos:", docs_ia])
+            st.session_state['resumo_texto'] = res.text
+            salvar_estado(resumo=res.text)
         if st.session_state['resumo_texto']:
             st.markdown(st.session_state['resumo_texto'])
 
     with aba3:
-        duvida = st.text_input("Digite sua dúvida sobre o conteúdo:")
-        if st.button("Enviar Pergunta"):
-            if duvida:
-                with st.spinner("Consultando materiais..."):
-                    res = model.generate_content([duvida, docs_ia])
-                    st.write(res.text)
+        p = st.text_input("Dúvida:")
+        if st.button("Perguntar"):
+            res = model.generate_content([p, docs_ia])
+            st.write(res.text)
