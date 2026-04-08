@@ -1,18 +1,18 @@
 import streamlit as st
 import pandas as pd
 
-# Configuração da página e Título (Já corrigi seu nome aqui!)
 st.set_page_config(page_title="Dashboard do Renatinho", layout="wide")
 
 st.title("🚀 Painel de Controle de Estudos - Renatinho")
 
-# --- BARRA LATERAL (Interface mais limpa) ---
+# --- BARRA LATERAL (Corrigida!) ---
 st.sidebar.header("📥 Registrar Progresso")
 with st.sidebar.form("formulario"):
-    materia = st.sidebar.text_input("Nome da Matéria")
-    horas = st.sidebar.number_input("Horas Estudadas", min_value=0.5, step=0.5)
-    questoes = st.sidebar.number_input("Questões Feitas", min_value=0)
-    enviar = st.sidebar.form_submit_button("Atualizar Dashboard")
+    # Tirei a palavra 'sidebar' daqui de dentro, era isso que estava quebrando
+    materia = st.text_input("Nome da Matéria")
+    horas = st.number_input("Horas Estudadas", min_value=0.5, step=0.5)
+    questoes = st.number_input("Questões Feitas", min_value=0)
+    enviar = st.form_submit_button("Atualizar Dashboard")
 
 # Memória do App
 if 'dados' not in st.session_state:
