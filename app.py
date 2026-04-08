@@ -19,12 +19,17 @@ except:
 
 def conectar_planilha():
     try:
-        # ALTERAÇÃO REALIZADA AQUI: Acesso direto ao dicionário do TOML
+        # Acesso ao dicionário do TOML configurado nos Secrets
         cred_dict = dict(st.secrets["gcp_service_account"])
         escopos = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(cred_dict, scopes=escopos)
         client = gspread.authorize(creds)
-        return client.open("Banco de Estudos")
+        
+        # URL da sua planilha fornecida
+        url_planilha = "https://docs.google.com/spreadsheets/d/1tZmD5U2DLXXT1te4R7OLfaQKR78eHhAJmpn2WwnUO70/edit?usp=drivesdk"
+        
+        # Abre diretamente pelo link para evitar erros de busca por nome
+        return client.open_by_url(url_planilha)
     except Exception as e:
         st.sidebar.error(f"Erro na conexão com o Sheets: {e}")
         return None
@@ -39,7 +44,7 @@ def salvar_estado(questoes=None, resumo=None):
             if resumo is not None:
                 aba_estado.update_acell('B1', resumo)
         except:
-            st.error("Aba 'Estado_Atual' não encontrada na planilha.")
+            st.error("Aba 'Estado_Atual' não encontrada. Verifique o nome na sua planilha.")
 
 def carregar_estado():
     gc = conectar_planilha()
@@ -56,7 +61,7 @@ def carregar_estado():
             return [], ""
     return [], ""
 
-# --- Inicialização da Memória (Tenta carregar da Planilha no início) ---
+# --- Inicialização da Memória (Carrega os dados salvos ao abrir o app) ---
 if 'questoes_lista' not in st.session_state or not st.session_state['questoes_lista']:
     q, r = carregar_estado()
     st.session_state['questoes_lista'] = q
@@ -84,31 +89,31 @@ with st.sidebar:
     
     if st.button("☁️ Salvar Registro Final", use_container_width=True):
         if disciplina:
-            with st.spinner("Enviando dados..."):
+            with st.spinner("Enviando dados para a nuvem..."):
                 gc = conectar_planilha()
                 if gc:
-                    planilha_log = gc.sheet1 # Primeira aba (Registro)
+                    planilha_log = gc.sheet1 # Salva na primeira aba
                     fuso_br = pytz.timezone('America/Sao_Paulo')
                     data_hora = datetime.now(fuso_br).strftime("%d/%m/%Y %H:%M")
                     planilha_log.append_row([data_hora, disciplina, horas, total_q, acertos, erros])
-                    st.success("Progresso salvo!")
+                    st.success("Progresso salvo com sucesso!")
         else:
-            st.warning("Informe a Disciplina.")
+            st.warning("Preencha o campo Disciplina.")
 
     st.divider()
-    if st.button("🗑️ Limpar Tudo (App e Nuvem)", use_container_width=True):
+    if st.button("🗑️ Limpar Tudo", use_container_width=True):
         st.session_state['questoes_lista'] = []
         st.session_state['resumo_texto'] = ""
         st.session_state['mostrar_gabarito'] = False
-        salvar_estado([], "") # Limpa a planilha de estado também
+        salvar_estado([], "") 
         st.rerun()
 
 # ==========================================
 # 🚀 ÁREA PRINCIPAL
 # ==========================================
-st.title("📚 Sistema de Estudos com Memória")
+st.title("📚 Sistema de Estudos Profissional")
 
-arquivos = st.file_uploader("Suba seus arquivos PDFs", type="pdf", accept_multiple_files=True)
+arquivos = st.file_uploader("Suba seus materiais em PDF", type="pdf", accept_multiple_files=True)
 
 if arquivos:
     docs_ia = [{"mime_type": "application/pdf", "data": f.getvalue()} for f in arquivos]
@@ -118,13 +123,13 @@ if arquivos:
     with aba1:
         col1, col2 = st.columns([1, 2])
         with col1:
-            qtd = st.number_input("Quantas questões?", min_value=1, max_value=10, value=3)
+            qtd = st.number_input("Quantas questões?", min_value=1, max_value=15, value=3)
         with col2:
             st.write("")
             st.write("")
             if st.button("🚀 GERAR NOVO SIMULADO", type="primary", use_container_width=True):
                 st.session_state['mostrar_gabarito'] = False
-                with st.spinner("Gerando questões..."):
+                with st.spinner("A IA está analisando seus materiais..."):
                     prompt = f"Gere {qtd} questões de múltipla escolha baseadas nos PDFs em JSON puro: pergunta, opcoes (lista A-E), correta, explica."
                     resp = model.generate_content([prompt] + docs_ia)
                     match = re.search(r'\[.*\]', resp.text, re.DOTALL)
@@ -135,27 +140,29 @@ if arquivos:
                         st.rerun()
 
         if st.session_state['questoes_lista']:
-            st.info("💡 Estas questões estão salvas na nuvem.")
+            st.info("💡 Estas questões estão sincronizadas com sua planilha.")
             for i, item in enumerate(st.session_state['questoes_lista']):
                 st.markdown(f"**{i+1}. {item['pergunta']}**")
-                st.radio("Alternativas:", item['opcoes'], key=f"q_{i}", index=None)
+                st.radio("Selecione a resposta:", item['opcoes'], key=f"q_{i}", index=None, label_visibility="collapsed")
+                st.write("")
             
-            if st.button("✅ CONFERIR GABARITO"):
+            if st.button("✅ VERIFICAR RESPOSTAS", use_container_width=True):
                 st.session_state['mostrar_gabarito'] = True
             
             if st.session_state['mostrar_gabarito']:
+                st.divider()
                 for i, item in enumerate(st.session_state['questoes_lista']):
                     escolha = st.session_state.get(f"q_{i}")
                     if escolha == item['correta']:
-                        st.success(f"{i+1}: Correta!")
+                        st.success(f"Questão {i+1}: Correta! ✅")
                     else:
-                        st.error(f"{i+1}: Incorreta. Resposta: {item['correta']}")
-                    st.caption(f"Explicação: {item['explica']}")
+                        st.error(f"Questão {i+1}: Errada. Você marcou {escolha}. A correta é {item['correta']}")
+                    st.info(f"💡 Explicação: {item['explica']}")
 
     with aba2:
-        if st.button("Gerar/Atualizar Resumo"):
-            with st.spinner("Escrevendo..."):
-                res = model.generate_content(["Resuma estes documentos:", docs_ia])
+        if st.button("Gerar ou Atualizar Resumo"):
+            with st.spinner("Criando resumo estruturado..."):
+                res = model.generate_content(["Faça um resumo detalhado e estruturado destes documentos:", docs_ia])
                 st.session_state['resumo_texto'] = res.text
                 salvar_estado(resumo=res.text)
         
@@ -163,9 +170,9 @@ if arquivos:
             st.markdown(st.session_state['resumo_texto'])
 
     with aba3:
-        p = st.text_input("Sua dúvida sobre os PDFs:")
-        if st.button("Perguntar"):
-            if p:
-                with st.spinner("Pensando..."):
-                    res = model.generate_content([p, docs_ia])
+        duvida = st.text_input("Digite sua dúvida sobre o conteúdo:")
+        if st.button("Enviar Pergunta"):
+            if duvida:
+                with st.spinner("Consultando materiais..."):
+                    res = model.generate_content([duvida, docs_ia])
                     st.write(res.text)
