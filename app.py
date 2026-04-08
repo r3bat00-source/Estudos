@@ -17,12 +17,10 @@ lista_modelos = []
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     
-    # Rastreia todos os modelos que a sua chave tem acesso real
     for m in genai.list_models():
         if "generateContent" in m.supported_generation_methods:
             lista_modelos.append(m.name.replace("models/", ""))
             
-    # MUDANÇA AQUI: Prioridade TOTAL para o 1.5-flash (O Trator da cota gratuita)
     opcoes_ideais = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
     modelo_escolhido = None
     
@@ -160,8 +158,11 @@ st.title("📚 Sistema de Estudos Profissional")
 
 arquivos = st.file_uploader("Suba seus materiais em PDF", type="pdf", accept_multiple_files=True)
 
-if arquivos:
-    docs_ia = [{"mime_type": "application/pdf", "data": f.getvalue()} for f in arquivos]
+# Prepara os arquivos para a IA (apenas se tiver feito o upload nesta sessão)
+docs_ia = [{"mime_type": "application/pdf", "data": f.getvalue()} for f in arquivos] if arquivos else []
+
+# O GRANDE TRUQUE: Mostra o conteúdo se tiver PDF novo OU se a memória tiver guardado algo!
+if arquivos or st.session_state.get('questoes_lista') or st.session_state.get('resumo_texto'):
     aba1, aba2, aba3 = st.tabs(["📝 Simulado", "📑 Resumo", "💬 Chat"])
 
     with aba1:
@@ -172,41 +173,45 @@ if arquivos:
             st.write("")
             st.write("")
             if st.button("🚀 GERAR NOVO SIMULADO", type="primary", use_container_width=True):
-                st.session_state['mostrar_gabarito'] = False
-                with st.spinner("Analisando conteúdos..."):
-                    prompt = f"""
-                    Gere {qtd} questões de múltipla escolha baseadas nos PDFs.
-                    Retorne ESTRITAMENTE um array JSON. NÃO inclua a formatação ```json.
-                    FORMATO: [{{"topico": "Assunto curto", "pergunta": "...", "opcoes": ["A) ...", "B) ...", "C) ...", "D) ...", "E) ..."], "correta": "A", "explica": "Explique detalhadamente POR QUE a opção correta está certa e POR QUE as outras alternativas estão erradas."}}]
-                    """
-                    try:
-                        resp = model.generate_content([prompt] + docs_ia)
-                        texto_limpo = resp.text.strip()
-                        if texto_limpo.startswith("```json"):
-                            texto_limpo = texto_limpo[7:]
-                        elif texto_limpo.startswith("```"):
-                            texto_limpo = texto_limpo[3:]
-                        if texto_limpo.endswith("```"):
-                            texto_limpo = texto_limpo[:-3]
+                # Trava de segurança: Se o cara clicou em gerar, mas não subiu o PDF!
+                if not arquivos:
+                    st.warning("⚠️ Para gerar novas questões, por favor faça o upload do PDF acima primeiro!")
+                else:
+                    st.session_state['mostrar_gabarito'] = False
+                    with st.spinner("Analisando conteúdos..."):
+                        prompt = f"""
+                        Gere {qtd} questões de múltipla escolha baseadas nos PDFs.
+                        Retorne ESTRITAMENTE um array JSON. NÃO inclua a formatação ```json.
+                        FORMATO: [{{"topico": "Assunto curto", "pergunta": "...", "opcoes": ["A) ...", "B) ...", "C) ...", "D) ...", "E) ..."], "correta": "A", "explica": "Explique detalhadamente POR QUE a opção correta está certa e POR QUE as outras alternativas estão erradas."}}]
+                        """
+                        try:
+                            resp = model.generate_content([prompt] + docs_ia)
+                            texto_limpo = resp.text.strip()
+                            if texto_limpo.startswith("```json"):
+                                texto_limpo = texto_limpo[7:]
+                            elif texto_limpo.startswith("```"):
+                                texto_limpo = texto_limpo[3:]
+                            if texto_limpo.endswith("```"):
+                                texto_limpo = texto_limpo[:-3]
 
-                        match = re.search(r'\[.*\]', texto_limpo, re.DOTALL)
-                        if match:
-                            try:
-                                dados = json.loads(match.group())
-                                st.session_state['questoes_lista'] = dados
-                                salvar_estado(questoes=dados)
-                                st.rerun()
-                            except json.JSONDecodeError:
-                                st.error("⚠️ A IA se atrapalhou no formato. Tente gerar novamente!")
-                        else:
-                            st.error("⚠️ Formato inesperado. Tente gerar novamente.")
-                    except Exception as e:
-                        # Filtro Anti-Tela Vermelha para limites de leitura
-                        if "429" in str(e) or "ResourceExhausted" in str(e):
-                            st.warning("⏳ Limite rápido de leituras atingido (ou seu PDF é muito grande). Aguarde 1 minutinho e tente gerar novamente!")
-                        else:
-                            st.error(f"Erro ao gerar: {e}")
+                            match = re.search(r'\[.*\]', texto_limpo, re.DOTALL)
+                            if match:
+                                try:
+                                    dados = json.loads(match.group())
+                                    st.session_state['questoes_lista'] = dados
+                                    salvar_estado(questoes=dados)
+                                    st.rerun()
+                                except json.JSONDecodeError:
+                                    st.error("⚠️ A IA se atrapalhou no formato. Tente gerar novamente!")
+                            else:
+                                st.error("⚠️ Formato inesperado. Tente gerar novamente.")
+                        except Exception as e:
+                            if "429" in str(e) or "ResourceExhausted" in str(e):
+                                st.warning("⏳ Limite rápido de leituras atingido. Aguarde alguns segundos e tente gerar novamente!")
+                            else:
+                                st.error(f"Erro ao gerar: {e}")
 
+        # Mostra as questões perfeitamente, independente de ter um PDF na tela ou não
         if st.session_state['questoes_lista']:
             for i, item in enumerate(st.session_state['questoes_lista']):
                 st.markdown(f"**{i+1}. [{item.get('topico', 'Geral')}]** {item['pergunta']}")
@@ -247,15 +252,22 @@ if arquivos:
 
     with aba2:
         if st.button("Gerar Resumo"):
-            with st.spinner("Escrevendo..."):
-                res = model.generate_content(["Resuma estes documentos:", docs_ia])
-                st.session_state['resumo_texto'] = res.text
-                salvar_estado(resumo=res.text)
+            if not arquivos:
+                st.warning("⚠️ Faça o upload do PDF para eu poder ler e resumir!")
+            else:
+                with st.spinner("Escrevendo..."):
+                    res = model.generate_content(["Resuma estes documentos:", docs_ia])
+                    st.session_state['resumo_texto'] = res.text
+                    salvar_estado(resumo=res.text)
+                    
         if st.session_state['resumo_texto']:
             st.markdown(st.session_state['resumo_texto'])
 
     with aba3:
         p = st.text_input("Dúvida:")
         if st.button("Perguntar"):
-            res = model.generate_content([p, docs_ia])
-            st.write(res.text)
+            if not arquivos:
+                st.warning("⚠️ Faça o upload do PDF para eu poder consultar os materiais!")
+            else:
+                res = model.generate_content([p, docs_ia])
+                st.write(res.text)
