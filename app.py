@@ -11,7 +11,7 @@ if 'questoes_geradas' not in st.session_state:
 # 2. Configurando a chave da IA (puxando do Secrets do Streamlit Cloud)
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-2.5-flash')
 except Exception as e:
     st.error("Erro ao conectar com a IA. Verifique se a chave está correta no Secrets.")
 
