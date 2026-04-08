@@ -10,32 +10,39 @@ import pytz
 # 1. Configuração de Página
 st.set_page_config(page_title="Dashboard de Estudos Pro", layout="wide")
 
-# 2. Configurações de API e Conexão
-modelo_ativo = "Não conectado"
+# 2. Configurações de API e "Radar de Modelos"
+modelo_ativo = "Buscando..."
+lista_modelos = []
 
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     
-    # --- O TRUQUE MÁGICO: AUTO-DETECÇÃO DO MODELO ---
-    modelo_correto = "gemini-1.5-flash" # Padrão caso algo dê errado
+    # Rastreia todos os modelos que a sua chave tem acesso real
+    for m in genai.list_models():
+        if "generateContent" in m.supported_generation_methods:
+            lista_modelos.append(m.name.replace("models/", ""))
+            
+    # Tenta escolher o melhor motor fugindo do 2.5 (que tem o limite de 20)
+    opcoes_ideais = ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash", "gemini-pro"]
+    modelo_escolhido = None
     
-    try:
-        # Pede a lista de modelos liberados para a sua chave
-        for m in genai.list_models():
-            if "generateContent" in m.supported_generation_methods:
-                if "1.5-flash" in m.name:
-                    # Pega o nome exato que o Google quer
-                    modelo_correto = m.name.replace("models/", "")
-                    break
-    except:
-        pass
+    for ideal in opcoes_ideais:
+        if ideal in lista_modelos:
+            modelo_escolhido = ideal
+            break
+            
+    # Se não tiver nenhum dos ideais, pega o primeiro que o Google liberar
+    if not modelo_escolhido and lista_modelos:
+        modelo_escolhido = lista_modelos[0]
         
-    model = genai.GenerativeModel(modelo_correto)
-    modelo_ativo = modelo_correto
-    # --------------------------------------------------
+    if modelo_escolhido:
+        model = genai.GenerativeModel(modelo_escolhido)
+        modelo_ativo = modelo_escolhido
+    else:
+        modelo_ativo = "Erro: Nenhum modelo encontrado para esta chave."
 
 except Exception as e:
-    st.error(f"Erro na API Key do Gemini. Verifique os Secrets. {e}")
+    st.error(f"Erro na conexão com a IA: {e}")
 
 def conectar_planilha():
     try:
@@ -144,8 +151,11 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    # Mostra qual versão da IA o app escolheu automaticamente
-    st.caption(f"⚙️ Motor ativo: {modelo_ativo}")
+    st.subheader("🛠️ Diagnóstico da IA")
+    st.caption(f"**Motor Escolhido:** {modelo_ativo}")
+    with st.expander("Ver modelos liberados na sua chave"):
+        for m in lista_modelos:
+            st.caption(f"- {m}")
 
 # ==========================================
 # 🚀 ÁREA PRINCIPAL
