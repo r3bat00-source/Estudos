@@ -29,25 +29,32 @@ def conectar_planilha():
         st.sidebar.error(f"Erro na conexão com o Sheets: {e}")
         return None
 
+# Função blindada que cria a aba se você não tiver criado
+def obter_aba_estado(gc):
+    titulos_abas = [aba.title for aba in gc.worksheets()]
+    if "Estado_Atual" not in titulos_abas:
+        return gc.add_worksheet(title="Estado_Atual", rows="10", cols="10")
+    return gc.worksheet("Estado_Atual")
+
 def salvar_estado(questoes=None, resumo=None, revisar=None):
     gc = conectar_planilha()
     if gc:
         try:
-            aba_estado = gc.worksheet("Estado_Atual")
+            aba_estado = obter_aba_estado(gc)
             if questoes is not None:
                 aba_estado.update_acell('A1', json.dumps(questoes))
             if resumo is not None:
                 aba_estado.update_acell('B1', resumo)
             if revisar is not None:
                 aba_estado.update_acell('C1', json.dumps(revisar))
-        except:
-            st.error("Aba 'Estado_Atual' não encontrada.")
+        except Exception as e:
+            st.error(f"Erro ao salvar estado: {e}")
 
 def carregar_estado():
     gc = conectar_planilha()
     if gc:
         try:
-            aba_estado = gc.worksheet("Estado_Atual")
+            aba_estado = obter_aba_estado(gc)
             q_raw = aba_estado.acell('A1').value
             r_raw = aba_estado.acell('B1').value
             rev_raw = aba_estado.acell('C1').value
@@ -77,12 +84,11 @@ with st.sidebar:
     disciplina = st.text_input("Matéria:")
     horas = st.number_input("Horas de Foco:", min_value=0.0, step=0.5)
     
-    # NOVO: Aba de Assuntos para Revisar
     with st.expander("📚 Assuntos para Revisar", expanded=True):
         if st.session_state['revisar_lista']:
             for assunto in st.session_state['revisar_lista']:
                 st.write(f"• {assunto}")
-            if st.button("Clear Review List"):
+            if st.button("Limpar Lista de Revisão"):
                 st.session_state['revisar_lista'] = []
                 salvar_estado(revisar=[])
                 st.rerun()
@@ -108,12 +114,13 @@ with st.sidebar:
                 planilha_log.append_row([data_hora, disciplina, horas, total_q, acertos, erros])
                 st.success("Salvo!")
         else:
-            st.warning("Preencha a Disciplina.")
+            st.warning("Preencha a Disciplina antes de salvar.")
 
-    if st.button("🗑️ Limpar Tudo", use_container_width=True):
+    if st.button("🗑️ Limpar Tudo do App", use_container_width=True):
         st.session_state['questoes_lista'] = []
         st.session_state['resumo_texto'] = ""
         st.session_state['revisar_lista'] = []
+        st.session_state['mostrar_gabarito'] = False
         salvar_estado([], "", [])
         st.rerun()
 
@@ -138,19 +145,33 @@ if arquivos:
             if st.button("🚀 GERAR NOVO SIMULADO", type="primary", use_container_width=True):
                 st.session_state['mostrar_gabarito'] = False
                 with st.spinner("Analisando conteúdos..."):
+                    # O NOVO PROMPT EXIGE EXPLICAÇÃO DETALHADA DO ERRO E ACERTO
                     prompt = f"""
                     Gere {qtd} questões de múltipla escolha baseadas nos PDFs.
-                    Retorne ESTRITAMENTE um array JSON. 
-                    FORMATO: [{{"topico": "Assunto curto", "pergunta": "...", "opcoes": ["A...", "B...", "C...", "D...", "E..."], "correta": "Letra e texto", "explica": "..."}}]
+                    Retorne ESTRITAMENTE um array JSON. NÃO inclua a formatação ```json.
+                    FORMATO: [{{"topico": "Assunto curto", "pergunta": "...", "opcoes": ["A) ...", "B) ...", "C) ...", "D) ...", "E) ..."], "correta": "A", "explica": "Explique detalhadamente POR QUE a opção correta está certa e POR QUE as outras alternativas estão erradas."}}]
                     """
                     try:
                         resp = model.generate_content([prompt] + docs_ia)
-                        match = re.search(r'\[.*\]', resp.text, re.DOTALL)
+                        texto_limpo = resp.text.strip()
+                        if texto_limpo.startswith("```json"):
+                            texto_limpo = texto_limpo[7:]
+                        elif texto_limpo.startswith("```"):
+                            texto_limpo = texto_limpo[3:]
+                        if texto_limpo.endswith("```"):
+                            texto_limpo = texto_limpo[:-3]
+
+                        match = re.search(r'\[.*\]', texto_limpo, re.DOTALL)
                         if match:
-                            dados = json.loads(match.group())
-                            st.session_state['questoes_lista'] = dados
-                            salvar_estado(questoes=dados)
-                            st.rerun()
+                            try:
+                                dados = json.loads(match.group())
+                                st.session_state['questoes_lista'] = dados
+                                salvar_estado(questoes=dados)
+                                st.rerun()
+                            except json.JSONDecodeError:
+                                st.error("⚠️ A IA se atrapalhou no formato. Tente gerar novamente!")
+                        else:
+                            st.error("⚠️ Formato inesperado. Tente gerar novamente.")
                     except Exception as e:
                         st.error(f"Erro ao gerar: {e}")
 
@@ -169,32 +190,36 @@ if arquivos:
                 for i, item in enumerate(st.session_state['questoes_lista']):
                     escolha = st.session_state.get(f"q_{i}")
                     if not escolha:
-                        st.warning(f"Q{i+1}: Sem resposta.")
+                        st.warning(f"Questão {i+1}: Sem resposta.")
+                        st.info(f"💡 **Explicação:** {item.get('explica', 'Sem explicação.')}")
+                        st.write("")
                         continue
                     
-                    # Lógica de comparação blindada (apenas primeira letra)
                     letra_user = escolha[0].upper()
                     letra_correta = item['correta'][0].upper()
                     
                     if letra_user == letra_correta:
-                        st.success(f"Questão {i+1}: Correta! ✅")
+                        st.success(f"Questão {i+1}: Correta! ✅ Você marcou {letra_user}.")
                     else:
-                        st.error(f"Questão {i+1}: Errada. Marcou {letra_user}, era {letra_correta}")
-                        # Adiciona o tópico aos erros para revisão se já não estiver lá
+                        st.error(f"Questão {i+1}: Errada. Você marcou {letra_user}, mas a correta é {letra_correta}.")
                         topico = item.get('topico', 'Assunto Geral')
                         if topico not in novos_erros:
                             novos_erros.append(topico)
+                    
+                    # Agora a explicação detalhada de erros e acertos aparece logo abaixo!
+                    st.info(f"💡 **Por que essa é a resposta?**\n\n{item.get('explica', 'Sem explicação.')}")
+                    st.write("")
                 
-                # Salva a nova lista de revisão na memória e no Sheets
                 st.session_state['revisar_lista'] = novos_erros
                 salvar_estado(revisar=novos_erros)
-                st.info("💡 Tópicos de questões erradas foram adicionados à sua lista de revisão na barra lateral.")
+                st.caption("Verifique a barra lateral para ver os tópicos adicionados à sua lista de revisão.")
 
     with aba2:
         if st.button("Gerar Resumo"):
-            res = model.generate_content(["Resuma estes documentos:", docs_ia])
-            st.session_state['resumo_texto'] = res.text
-            salvar_estado(resumo=res.text)
+            with st.spinner("Escrevendo..."):
+                res = model.generate_content(["Resuma estes documentos:", docs_ia])
+                st.session_state['resumo_texto'] = res.text
+                salvar_estado(resumo=res.text)
         if st.session_state['resumo_texto']:
             st.markdown(st.session_state['resumo_texto'])
 
