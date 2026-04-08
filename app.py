@@ -11,12 +11,31 @@ import pytz
 st.set_page_config(page_title="Dashboard de Estudos Pro", layout="wide")
 
 # 2. Configurações de API e Conexão
+modelo_ativo = "Não conectado"
+
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    # Motor atualizado e padrão
-    model = genai.GenerativeModel('gemini-1.5-flash')
-except:
-    st.error("Erro na API Key do Gemini. Verifique os Secrets.")
+    
+    # --- O TRUQUE MÁGICO: AUTO-DETECÇÃO DO MODELO ---
+    modelo_correto = "gemini-1.5-flash" # Padrão caso algo dê errado
+    
+    try:
+        # Pede a lista de modelos liberados para a sua chave
+        for m in genai.list_models():
+            if "generateContent" in m.supported_generation_methods:
+                if "1.5-flash" in m.name:
+                    # Pega o nome exato que o Google quer
+                    modelo_correto = m.name.replace("models/", "")
+                    break
+    except:
+        pass
+        
+    model = genai.GenerativeModel(modelo_correto)
+    modelo_ativo = modelo_correto
+    # --------------------------------------------------
+
+except Exception as e:
+    st.error(f"Erro na API Key do Gemini. Verifique os Secrets. {e}")
 
 def conectar_planilha():
     try:
@@ -123,6 +142,10 @@ with st.sidebar:
         st.session_state['mostrar_gabarito'] = False
         salvar_estado([], "", [])
         st.rerun()
+
+    st.divider()
+    # Mostra qual versão da IA o app escolheu automaticamente
+    st.caption(f"⚙️ Motor ativo: {modelo_ativo}")
 
 # ==========================================
 # 🚀 ÁREA PRINCIPAL
