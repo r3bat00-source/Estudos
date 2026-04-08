@@ -22,8 +22,8 @@ try:
         if "generateContent" in m.supported_generation_methods:
             lista_modelos.append(m.name.replace("models/", ""))
             
-    # Tenta escolher o melhor motor fugindo do 2.5 (que tem o limite de 20)
-    opcoes_ideais = ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash", "gemini-pro"]
+    # MUDANÇA AQUI: Prioridade TOTAL para o 1.5-flash (O Trator da cota gratuita)
+    opcoes_ideais = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
     modelo_escolhido = None
     
     for ideal in opcoes_ideais:
@@ -31,7 +31,6 @@ try:
             modelo_escolhido = ideal
             break
             
-    # Se não tiver nenhum dos ideais, pega o primeiro que o Google liberar
     if not modelo_escolhido and lista_modelos:
         modelo_escolhido = lista_modelos[0]
         
@@ -153,9 +152,6 @@ with st.sidebar:
     st.divider()
     st.subheader("🛠️ Diagnóstico da IA")
     st.caption(f"**Motor Escolhido:** {modelo_ativo}")
-    with st.expander("Ver modelos liberados na sua chave"):
-        for m in lista_modelos:
-            st.caption(f"- {m}")
 
 # ==========================================
 # 🚀 ÁREA PRINCIPAL
@@ -205,7 +201,11 @@ if arquivos:
                         else:
                             st.error("⚠️ Formato inesperado. Tente gerar novamente.")
                     except Exception as e:
-                        st.error(f"Erro ao gerar: {e}")
+                        # Filtro Anti-Tela Vermelha para limites de leitura
+                        if "429" in str(e) or "ResourceExhausted" in str(e):
+                            st.warning("⏳ Limite rápido de leituras atingido (ou seu PDF é muito grande). Aguarde 1 minutinho e tente gerar novamente!")
+                        else:
+                            st.error(f"Erro ao gerar: {e}")
 
         if st.session_state['questoes_lista']:
             for i, item in enumerate(st.session_state['questoes_lista']):
