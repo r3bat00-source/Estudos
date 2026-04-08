@@ -13,8 +13,7 @@ st.set_page_config(page_title="Dashboard de Estudos Pro", layout="wide")
 # 2. Configurações de API e Conexão
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        model = genai.GenerativeModel('gemini-1.5-flash')
-
+    model = genai.GenerativeModel('gemini-1.5-flash')
 except:
     st.error("Erro na API Key do Gemini. Verifique os Secrets.")
 
@@ -146,7 +145,6 @@ if arquivos:
             if st.button("🚀 GERAR NOVO SIMULADO", type="primary", use_container_width=True):
                 st.session_state['mostrar_gabarito'] = False
                 with st.spinner("Analisando conteúdos..."):
-                    # O NOVO PROMPT EXIGE EXPLICAÇÃO DETALHADA DO ERRO E ACERTO
                     prompt = f"""
                     Gere {qtd} questões de múltipla escolha baseadas nos PDFs.
                     Retorne ESTRITAMENTE um array JSON. NÃO inclua a formatação ```json.
@@ -207,7 +205,6 @@ if arquivos:
                         if topico not in novos_erros:
                             novos_erros.append(topico)
                     
-                    # Agora a explicação detalhada de erros e acertos aparece logo abaixo!
                     st.info(f"💡 **Por que essa é a resposta?**\n\n{item.get('explica', 'Sem explicação.')}")
                     st.write("")
                 
