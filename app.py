@@ -1,47 +1,70 @@
 import streamlit as st
-import pandas as pd
+import google.generativeai as genai
+from PyPDF2 import PdfReader
 
-st.set_page_config(page_title="Dashboard do Renatinho", layout="wide")
+# 1. Configurando a página e criando a "Memória Curta"
+st.set_page_config(page_title="App de Estudos", layout="wide")
 
-st.title("🚀 Painel de Controle de Estudos - Renatinho")
+if 'questoes_geradas' not in st.session_state:
+    st.session_state['questoes_geradas'] = ""
 
-# --- BARRA LATERAL (Corrigida!) ---
-st.sidebar.header("📥 Registrar Progresso")
-with st.sidebar.form("formulario"):
-    # Tirei a palavra 'sidebar' daqui de dentro, era isso que estava quebrando
-    materia = st.text_input("Nome da Matéria")
-    horas = st.number_input("Horas Estudadas", min_value=0.5, step=0.5)
-    questoes = st.number_input("Questões Feitas", min_value=0)
-    enviar = st.form_submit_button("Atualizar Dashboard")
+# 2. Configurando a chave da IA (puxando do Secrets do Streamlit Cloud)
+try:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    model = genai.GenerativeModel('gemini-1.5-flash')
+except Exception as e:
+    st.error("Erro ao conectar com a IA. Verifique se a chave está correta no Secrets.")
 
-# Memória do App
-if 'dados' not in st.session_state:
-    st.session_state.dados = []
+# 3. Função para extrair o texto do PDF
+def extrair_texto_pdf(arquivo):
+    leitor = PdfReader(arquivo)
+    texto = ""
+    for pagina in leitor.pages:
+        conteudo = pagina.extract_text()
+        if conteudo:
+            texto += conteudo
+    return texto
 
-if enviar and materia:
-    st.session_state.dados.append({"Matéria": materia, "Horas": horas, "Questões": questoes})
-    st.sidebar.success("Dados salvos!")
+# 4. Interface Principal
+st.title("🤖 Sabatina Inteligente com IA")
+st.write("Suba seu material em PDF e deixe a IA criar questões exclusivas para você.")
 
-# --- CORPO PRINCIPAL ---
-if st.session_state.dados:
-    df = pd.DataFrame(st.session_state.dados)
+arquivo_pdf = st.file_uploader("Arraste ou selecione seu PDF aqui", type="pdf")
+
+if arquivo_pdf is not None:
+    st.success("Arquivo carregado com sucesso!")
     
-    # Métricas no topo
-    col1, col2 = st.columns(2)
-    col1.metric("Total de Horas", f"{df['Horas'].sum()}h")
-    col2.metric("Total de Questões", df['Questões'].sum())
+    # Botão para acionar o Gemini
+    if st.button("Gerar Questões com Gabarito"):
+        with st.spinner("Lendo o PDF e elaborando as perguntas..."):
+            texto_extraido = extrair_texto_pdf(arquivo_pdf)
+            
+            # Limitamos o tamanho do texto enviado para a IA não travar
+            texto_limite = texto_extraido[:15000] 
+            
+            # O comando (prompt) para a IA agir como professor
+            prompt = f"""
+            Você é um professor especialista em preparação para provas.
+            Com base no texto abaixo, crie 3 questões de múltipla escolha (nível médio/difícil).
+            Cada questão deve ter 5 alternativas (A, B, C, D, E).
+            Apresente o gabarito comentado apenas no final de todas as questões.
+            
+            Texto base:
+            {texto_limite}
+            """
+            
+            # Chamando a IA e salvando o resultado na memória do site
+            resposta = model.generate_content(prompt)
+            st.session_state['questoes_geradas'] = resposta.text
 
-    st.divider()
-
-    # Gráficos Lado a Lado
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("📊 Horas por Matéria")
-        st.bar_chart(df.set_index("Matéria")["Horas"])
-    with c2:
-        st.subheader("🎯 Desempenho em Questões")
-        st.line_chart(df.set_index("Matéria")["Questões"])
-
-    st.table(df)
-else:
-    st.info("Aguardando seu primeiro registro na barra lateral ao lado! 👈")
+# 5. Exibindo as questões na tela
+# Como está salvo no session_state, não vai sumir se você clicar em outra coisa
+if st.session_state['questoes_geradas']:
+    st.markdown("---")
+    st.markdown("### 📝 Suas Questões:")
+    st.write(st.session_state['questoes_geradas'])
+    
+    # Botão extra para limpar a tela quando quiser subir outro PDF
+    if st.button("Limpar Questões"):
+        st.session_state['questoes_geradas'] = ""
+        st.rerun()
