@@ -1,161 +1,148 @@
 import streamlit as st
 import google.generativeai as genai
-import json # Biblioteca nova para ler as alternativas separadas
+import json
+import re
+import gspread
+from google.oauth2.service_account import Credentials
+from datetime import datetime
+import pytz
 
-# 1. Configuração Inicial e Memória
+# 1. Configuração de Página
 st.set_page_config(page_title="Dashboard de Estudos Pro", layout="wide")
 
-if 'respostas_ia' not in st.session_state:
-    st.session_state['respostas_ia'] = {"questoes_json": "", "resumo": "", "pergunta": ""}
+# Inicialização de Memória (Session State)
+if 'questoes_lista' not in st.session_state:
+    st.session_state['questoes_lista'] = []
 if 'mostrar_gabarito' not in st.session_state:
     st.session_state['mostrar_gabarito'] = False
+if 'resumo_texto' not in st.session_state:
+    st.session_state['resumo_texto'] = ""
 
-# 2. Configuração da IA
+# 2. Configurações de API
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     model = genai.GenerativeModel('gemini-2.5-flash')
-except Exception as e:
-    st.error("Erro na API Key. Verifique os Secrets do Streamlit.")
+except:
+    st.error("Erro na API Key do Gemini. Verifique os Secrets.")
+
+def conectar_planilha():
+    try:
+        # Puxa o JSON que você colou nos Secrets
+        cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS_JSON"])
+        escopos = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(cred_dict, scopes=escopos)
+        client = gspread.authorize(creds)
+        
+        # Abre a planilha pelo nome exato
+        sheet = client.open("Banco de Estudos").sheet1
+        return sheet
+    except Exception as e:
+        st.sidebar.error(f"Erro no Sheets: {e}")
+        return None
 
 # ==========================================
 # 📊 BARRA LATERAL
 # ==========================================
 with st.sidebar:
-    st.title("🎯 Meu Desempenho")
-    disciplina = st.text_input("Matéria atual:")
-    horas = st.number_input("Horas de foco:", min_value=0.0, step=0.5)
+    st.title("🎯 Painel de Controle")
+    disciplina = st.text_input("Matéria:")
+    horas = st.number_input("Horas de Foco:", min_value=0.0, step=0.5)
     
-    st.markdown("---")
-    st.subheader("Questões do Dia")
-    total = st.number_input("Total feitas:", min_value=0)
+    st.divider()
+    st.subheader("Desempenho da Sessão")
+    total_q = st.number_input("Total de Questões:", min_value=0)
     col_a, col_e = st.columns(2)
     with col_a:
         acertos = st.number_input("Acertos:", min_value=0)
     with col_e:
         erros = st.number_input("Erros:", min_value=0)
     
-    if st.button("Salvar Progresso"):
-        st.sidebar.success(f"Dados de {disciplina} registrados!")
+    if st.button("☁️ Salvar na Planilha", use_container_width=True):
+        if disciplina:
+            with st.spinner("Enviando dados..."):
+                planilha = conectar_planilha()
+                if planilha:
+                    fuso_br = pytz.timezone('America/Sao_Paulo')
+                    data_hora = datetime.now(fuso_br).strftime("%d/%m/%Y %H:%M")
+                    planilha.append_row([data_hora, disciplina, horas, total_q, acertos, erros])
+                    st.success("Dados salvos no Google Sheets!")
+        else:
+            st.warning("Informe a Disciplina.")
+
+    st.divider()
+    if st.button("🗑️ Limpar Questões", use_container_width=True):
+        st.session_state['questoes_lista'] = []
+        st.session_state['mostrar_gabarito'] = False
+        st.rerun()
 
 # ==========================================
-# 🤖 ÁREA PRINCIPAL
+# 🚀 ÁREA PRINCIPAL
 # ==========================================
-st.title("📚 Tutor Inteligente Multimatérias")
-st.info("Faça o upload dos PDFs e teste seus conhecimentos no modo Simulado Interativo.")
+st.title("📚 Tutor Inteligente (Multimodal)")
 
-# Upload de múltiplos arquivos
-arquivos_pdf = st.file_uploader(
-    "Selecione seus PDFs de estudo:", 
-    type="pdf", 
-    accept_multiple_files=True
-)
+arquivos = st.file_uploader("Selecione seus PDFs", type="pdf", accept_multiple_files=True)
 
-if arquivos_pdf:
-    docs_ia = []
-    for pdf in arquivos_pdf:
-        docs_ia.append({
-            "mime_type": "application/pdf",
-            "data": pdf.getvalue()
-        })
+if arquivos:
+    docs_ia = [{"mime_type": "application/pdf", "data": f.getvalue()} for f in arquivos]
     
-    # Abas de Funcionalidades
-    t_quest, t_resumo, t_duvida = st.tabs(["📝 Simulado Interativo", "📑 Resumo Integrado", "💬 Chat com PDF"])
-    
-    # --- ABA 1: SIMULADO INTERATIVO ---
-    with t_quest:
-        if st.button("Gerar Simulado"):
-            # Reseta o gabarito caso você gere um simulado novo
-            st.session_state['mostrar_gabarito'] = False 
-            
-            with st.spinner("Elaborando as questões..."):
-                # Pedimos para a IA retornar no formato JSON para criarmos os botões
-                prompt = """
-                Gere 3 questões de múltipla escolha baseadas nestes documentos.
-                Você DEVE retornar APENAS um array JSON válido, sem texto extra, seguindo EXATAMENTE esta estrutura:
-                [
-                  {
-                    "questao": "Texto da pergunta",
-                    "opcoes": ["A) opcao 1", "B) opcao 2", "C) opcao 3", "D) opcao 4", "E) opcao 5"],
-                    "resposta_correta": "A) opcao 1",
-                    "comentario": "Explicação detalhada do gabarito"
-                  }
-                ]
-                """
-                resp = model.generate_content([prompt] + docs_ia)
-                st.session_state['respostas_ia']['questoes_json'] = resp.text
+    aba1, aba2, aba3 = st.tabs(["📝 Simulado", "📑 Resumo", "💬 Chat"])
 
-        # Lógica para desenhar as questões na tela com as caixinhas
-        if st.session_state['respostas_ia']['questoes_json']:
-            st.markdown("---")
-            try:
-                # Limpa o texto caso a IA mande com formatação Markdown
-                texto_ia = st.session_state['respostas_ia']['questoes_json']
-                texto_limpo = texto_ia.replace("```json", "").replace("```", "").strip()
-                lista_questoes = json.loads(texto_limpo)
-                
-                # Guarda o que você marcar
-                respostas_marcadas = []
-                
-                # Desenha cada pergunta com suas opções
-                for i, q in enumerate(lista_questoes):
-                    st.markdown(f"**{i+1}. {q['questao']}**")
-                    # Cria as caixinhas para você escolher (radio buttons)
-                    escolha = st.radio("Escolha uma alternativa:", q['opcoes'], key=f"radio_{i}", index=None)
-                    respostas_marcadas.append(escolha)
-                    st.write("") # Dá um espaço
-                
-                # O botão mágico de verificar
-                if st.button("Verificar Respostas", type="primary"):
-                    st.session_state['mostrar_gabarito'] = True
-                
-                # O que acontece APÓS clicar em Verificar Respostas
-                if st.session_state['mostrar_gabarito']:
-                    st.markdown("---")
-                    st.subheader("🎯 Gabarito Comentado")
-                    
-                    acertos_simulado = 0
-                    for i, q in enumerate(lista_questoes):
-                        st.markdown(f"**Questão {i+1}**")
-                        
-                        if respostas_marcadas[i]:
-                            # Compara se a alternativa que você marcou é igual a correta
-                            if respostas_marcadas[i] == q['resposta_correta']:
-                                st.success(f"Você marcou: {respostas_marcadas[i]} ✅ ACERTOU!")
-                                acertos_simulado += 1
-                            else:
-                                st.error(f"Você marcou: {respostas_marcadas[i]} ❌ ERROU.")
-                                st.info(f"Resposta Correta: {q['resposta_correta']}")
-                        else:
-                            st.warning("⚠️ Você deixou esta em branco.")
-                            st.info(f"Resposta Correta: {q['resposta_correta']}")
-                        
-                        # Mostra a explicação do professor
-                        st.write(f"**Comentário:** {q['comentario']}")
-                        st.write("")
-                    
-                    st.markdown(f"### 🏆 Seu resultado: {acertos_simulado} de {len(lista_questoes)}")
-
-            except Exception as e:
-                st.error("Ops! A IA não gerou as questões no formato perfeito dessa vez. Clique em Gerar Simulado novamente.")
-
-    # --- ABA 2: RESUMO (MANTIDA IGUAL) ---
-    with t_resumo:
-        if st.button("Gerar Resumo dos Materiais"):
-            with st.spinner("Sintetizando os arquivos..."):
-                prompt = "Crie um resumo único e conectado que englobe os pontos principais de todos os PDFs fornecidos."
-                resp = model.generate_content([prompt] + docs_ia)
-                st.session_state['respostas_ia']['resumo'] = resp.text
-        if st.session_state['respostas_ia']['resumo']:
-            st.write(st.session_state['respostas_ia']['resumo'])
-
-    # --- ABA 3: CHAT (MANTIDA IGUAL) ---
-    with t_duvida:
-        user_ask = st.text_input("O que você quer saber sobre esses materiais?")
-        if st.button("Perguntar à IA"):
-            if user_ask:
-                with st.spinner("Buscando resposta..."):
-                    prompt = f"Com base nos PDFs fornecidos, responda: {user_ask}"
+    # --- ABA 1: SIMULADO ---
+    with aba1:
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            qtd = st.number_input("Número de questões:", min_value=1, max_value=10, value=3)
+        with col2:
+            st.write("") # Alinhamento
+            st.write("")
+            if st.button("🚀 GERAR SIMULADO", type="primary", use_container_width=True):
+                st.session_state['mostrar_gabarito'] = False
+                with st.spinner("A IA está analisando seus PDFs..."):
+                    prompt = f"""
+                    Gere {qtd} questões de múltipla escolha baseadas nos PDFs.
+                    Retorne APENAS um JSON puro (sem markdown) neste formato:
+                    [{{"pergunta": "...", "opcoes": ["A) ..", "B) ..", "C) ..", "D) ..", "E) .."], "correta": "A) ..", "explica": ".."}}]
+                    """
                     resp = model.generate_content([prompt] + docs_ia)
-                    st.session_state['respostas_ia']['pergunta'] = resp.text
-        if st.session_state['respostas_ia']['pergunta']:
-            st.write(st.session_state['respostas_ia']['pergunta'])
+                    match = re.search(r'\[.*\]', resp.text, re.DOTALL)
+                    if match:
+                        st.session_state['questoes_lista'] = json.loads(match.group())
+                        st.rerun()
+
+        if st.session_state['questoes_lista']:
+            st.divider()
+            for i, item in enumerate(st.session_state['questoes_lista']):
+                st.markdown(f"**{i+1}. {item['pergunta']}**")
+                st.radio("Escolha a alternativa:", item['opcoes'], key=f"q_{i}", index=None, label_visibility="collapsed")
+                st.write("")
+
+            if st.button("✅ VERIFICAR RESPOSTAS", use_container_width=True):
+                st.session_state['mostrar_gabarito'] = True
+
+            if st.session_state['mostrar_gabarito']:
+                st.subheader("📊 Gabarito Comentado")
+                for i, item in enumerate(st.session_state['questoes_lista']):
+                    escolha = st.session_state.get(f"q_{i}")
+                    if escolha == item['correta']:
+                        st.success(f"Questão {i+1}: Correta! ✅")
+                    else:
+                        st.error(f"Questão {i+1}: Errada. Você marcou {escolha}. A correta é {item['correta']}")
+                    st.info(f"💡 Explicação: {item['explica']}")
+
+    # --- ABA 2: RESUMO ---
+    with aba2:
+        if st.button("Criar Resumo dos PDFs"):
+            with st.spinner("Sintetizando..."):
+                res = model.generate_content(["Crie um resumo estruturado desses PDFs:", docs_ia])
+                st.session_state['resumo_texto'] = res.text
+        if st.session_state['resumo_texto']:
+            st.markdown(st.session_state['resumo_texto'])
+
+    # --- ABA 3: CHAT ---
+    with aba3:
+        pergunta = st.text_input("Sua dúvida:")
+        if st.button("Enviar Pergunta"):
+            if pergunta:
+                with st.spinner("Pensando..."):
+                    res = model.generate_content([f"Baseado no PDF, responda: {pergunta}", docs_ia])
+                    st.write(res.text)
