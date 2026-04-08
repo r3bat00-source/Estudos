@@ -13,8 +13,8 @@ st.set_page_config(page_title="Dashboard de Estudos Pro", layout="wide")
 # 2. Configurações de API e Conexão
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-1.5-flash')
-except:
+    model = 
+except:genai.GenerativeModel('gemini-1.5-flash-latest')
     st.error("Erro na API Key do Gemini. Verifique os Secrets.")
 
 def conectar_planilha():
