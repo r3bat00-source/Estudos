@@ -13,8 +13,8 @@ st.set_page_config(page_title="Dashboard de Estudos Pro", layout="wide")
 # 2. Configurações de API e Conexão
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    # CORREÇÃO DO ERRO 404 (Adicionado o -latest)
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    # Motor atualizado e padrão
+    model = genai.GenerativeModel('gemini-1.5-flash')
 except:
     st.error("Erro na API Key do Gemini. Verifique os Secrets.")
 
@@ -30,7 +30,6 @@ def conectar_planilha():
         st.sidebar.error(f"Erro na conexão com o Sheets: {e}")
         return None
 
-# Função blindada que cria a aba se você não tiver criado
 def obter_aba_estado(gc):
     titulos_abas = [aba.title for aba in gc.worksheets()]
     if "Estado_Atual" not in titulos_abas:
@@ -211,8 +210,6 @@ if arquivos:
                 
                 st.session_state['revisar_lista'] = novos_erros
                 salvar_estado(revisar=novos_erros)
-                
-                # CORREÇÃO DO ERRO DA LINHA 214 ESTÁ AQUI EMBAIXO:
                 st.caption("Verifique a barra lateral para ver os tópicos adicionados à sua lista de revisão.")
 
     with aba2:
