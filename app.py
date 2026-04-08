@@ -13,9 +13,10 @@ st.set_page_config(page_title="Dashboard de Estudos Pro", layout="wide")
 # 2. Configurações de API e Conexão
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = 
-except:genai.GenerativeModel('gemini-1.5-flash-latest')
-    st.error("Erro na API Key do Gemini. Verifique os Secrets.")
+    # AQUI ESTÁ A LINHA CORRIGIDA:
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+except Exception as e:
+    st.error(f"Erro na API Key do Gemini. Verifique os Secrets. Detalhe: {e}")
 
 def conectar_planilha():
     try:
@@ -210,19 +211,4 @@ if arquivos:
                 
                 st.session_state['revisar_lista'] = novos_erros
                 salvar_estado(revisar=novos_erros)
-                st.caption("Verifique a barra lateral para ver os tópicos adicionados à sua lista de revisão.")
-
-    with aba2:
-        if st.button("Gerar Resumo"):
-            with st.spinner("Escrevendo..."):
-                res = model.generate_content(["Resuma estes documentos:", docs_ia])
-                st.session_state['resumo_texto'] = res.text
-                salvar_estado(resumo=res.text)
-        if st.session_state['resumo_texto']:
-            st.markdown(st.session_state['resumo_texto'])
-
-    with aba3:
-        p = st.text_input("Dúvida:")
-        if st.button("Perguntar"):
-            res = model.generate_content([p, docs_ia])
-            st.write(res.text)
+                st.caption("Verifique a barra lateral para ver
