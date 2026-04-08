@@ -19,13 +19,14 @@ except:
 
 def conectar_planilha():
     try:
-        cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS_JSON"])
+        # ALTERAÇÃO REALIZADA AQUI: Acesso direto ao dicionário do TOML
+        cred_dict = dict(st.secrets["gcp_service_account"])
         escopos = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(cred_dict, scopes=escopos)
         client = gspread.authorize(creds)
         return client.open("Banco de Estudos")
     except Exception as e:
-        st.sidebar.error(f"Erro na conexão: {e}")
+        st.sidebar.error(f"Erro na conexão com o Sheets: {e}")
         return None
 
 def salvar_estado(questoes=None, resumo=None):
@@ -55,7 +56,7 @@ def carregar_estado():
             return [], ""
     return [], ""
 
-# --- Inicialização da Memória (Tenta carregar da Planilha se o Session State estiver vazio) ---
+# --- Inicialização da Memória (Tenta carregar da Planilha no início) ---
 if 'questoes_lista' not in st.session_state or not st.session_state['questoes_lista']:
     q, r = carregar_estado()
     st.session_state['questoes_lista'] = q
@@ -107,7 +108,7 @@ with st.sidebar:
 # ==========================================
 st.title("📚 Sistema de Estudos com Memória")
 
-arquivos = st.file_uploader("Suba seus arquivos", type="pdf", accept_multiple_files=True)
+arquivos = st.file_uploader("Suba seus arquivos PDFs", type="pdf", accept_multiple_files=True)
 
 if arquivos:
     docs_ia = [{"mime_type": "application/pdf", "data": f.getvalue()} for f in arquivos]
@@ -130,11 +131,11 @@ if arquivos:
                     if match:
                         dados = json.loads(match.group())
                         st.session_state['questoes_lista'] = dados
-                        salvar_estado(questoes=dados) # SALVA NA PLANILHA
+                        salvar_estado(questoes=dados)
                         st.rerun()
 
         if st.session_state['questoes_lista']:
-            st.info("💡 Estas questões estão salvas na sua nuvem. Você pode fechar o app e elas continuarão aqui.")
+            st.info("💡 Estas questões estão salvas na nuvem.")
             for i, item in enumerate(st.session_state['questoes_lista']):
                 st.markdown(f"**{i+1}. {item['pergunta']}**")
                 st.radio("Alternativas:", item['opcoes'], key=f"q_{i}", index=None)
@@ -156,13 +157,15 @@ if arquivos:
             with st.spinner("Escrevendo..."):
                 res = model.generate_content(["Resuma estes documentos:", docs_ia])
                 st.session_state['resumo_texto'] = res.text
-                salvar_estado(resumo=res.text) # SALVA NA PLANILHA
+                salvar_estado(resumo=res.text)
         
         if st.session_state['resumo_texto']:
             st.markdown(st.session_state['resumo_texto'])
 
     with aba3:
-        p = st.text_input("Dúvida:")
+        p = st.text_input("Sua dúvida sobre os PDFs:")
         if st.button("Perguntar"):
-            res = model.generate_content([p, docs_ia])
-            st.write(res.text)
+            if p:
+                with st.spinner("Pensando..."):
+                    res = model.generate_content([p, docs_ia])
+                    st.write(res.text)
